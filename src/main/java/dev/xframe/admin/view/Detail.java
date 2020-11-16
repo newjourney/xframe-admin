@@ -2,8 +2,10 @@ package dev.xframe.admin.view;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -12,7 +14,6 @@ import dev.xframe.http.service.rest.HttpMethods.DELETE;
 import dev.xframe.http.service.rest.HttpMethods.GET;
 import dev.xframe.http.service.rest.HttpMethods.POST;
 import dev.xframe.http.service.rest.HttpMethods.PUT;
-import dev.xframe.utils.XStrings;
 
 public interface Detail {
     
@@ -26,8 +27,7 @@ public interface Detail {
         Method[] methods = declaring.getDeclaredMethods();
         for (Method method : methods) {
             if(method.isAnnotationPresent(GET.class)) {
-            	Option opt = (method.getParameters().length==0) ? Option.ini : Option.qry;
-				options.add(parseOption(opt, model, method, method.getAnnotation(GET.class).value()));
+            	options.add(parseOption(GetMethodOption(method), model, method, method.getAnnotation(GET.class).value()));
             } else if(method.isAnnotationPresent(PUT.class)) {
                 options.add(parseOption(Option.edt, model, method, method.getAnnotation(PUT.class).value()));
             } else if(method.isAnnotationPresent(DELETE.class)) {
@@ -39,6 +39,16 @@ public interface Detail {
         Collections.sort(options);
         return options;
     }
+
+    static Option GetMethodOption(Method method) {
+    	return isIniMethod(method) ? Option.ini : (isFlxMethod(method) ? Option.flx : Option.qry);
+    }
+	static boolean isFlxMethod(Method method) {
+		return method.isAnnotationPresent(XOption.class) && method.getAnnotation(XOption.class).type() == XOption.type_flx;
+	}
+	static boolean isIniMethod(Method method) {//GET,只有非URL参数
+		return !Arrays.stream(method.getParameters()).filter(p->p.isAnnotationPresent(HttpArgs.Param.class)).findAny().isPresent();
+	}
     
     static Option parseOption(Option op, Class<?> model, Method method, String path) {
         return op.copy(method.getAnnotation(XOption.class), path).with(parseParamColumns(model, method));
@@ -46,19 +56,17 @@ public interface Detail {
 
     static List<Column> parseParamColumns(Class<?> model, Method method) {
         List<Column> columns = new ArrayList<>();
-        Parameter[] params = method.getParameters();
-        //只有一个参数而且由HttpBody(post)解析.(edit/delete/add)
-        if(params.length == 1 && params[0].isAnnotationPresent(HttpArgs.Body.class)) {
-            if(!params[0].getType().equals(model)) {//与seg.model不同
-                columns = parseModelColumns(params[0].getType());
-            }
-        } else {
-            for (Parameter p : params) {
-                XColumn xi = p.getAnnotation(XColumn.class);
-                if(xi != null) {
-                    columns.add(new Column(p.getName(), XStrings.orElse(xi.value(), p.getName()), xi.type(), xi.enumKey(), xi.indep()));
-                }
-            }
+        //edit/delete/add 参数由HttpBody解析. 默认使用segment.columns, 如果有XAdapter标识的Param则使用该Param.type替代
+        for (Parameter p : method.getParameters()) {
+        	//XAdapter标识 HttpArgs.Body
+        	if(p.isAnnotationPresent(XAdapter.class) && p.isAnnotationPresent(HttpArgs.Body.class)) {
+        		columns = parseModelColumns(p.getType());
+        		break;//只会有一个
+        	}
+        	//XColumn标识 HttpArgs.Param
+        	if(p.isAnnotationPresent(XColumn.class)  && p.isAnnotationPresent(HttpArgs.Param.class)) {
+        		columns.add(new Column(p.getName(), p.getAnnotation(XColumn.class), p.getType()));
+        	}
         }
         return columns;
     }
@@ -72,18 +80,20 @@ public interface Detail {
         }
         Field[] fields = model.getDeclaredFields();
         for (Field field : fields) {
-            XColumn xf = field.getAnnotation(XColumn.class);
+        	if(Modifier.isTransient(field.getModifiers()) || Modifier.isStatic(field.getModifiers())) continue;
+            XColumn xc = field.getAnnotation(XColumn.class);
             String name = field.getName();
-            if(xf == null) {
-                columns.add(new Column(name, name, XColumn.type_text, "", true, XColumn.full, false));
-            } else if(xf.show() > 0) {
-                int xtype = xf.type();
-                if(xtype == 0 && (field.getType() == boolean.class || field.getType() == Boolean.class))
-                    xtype = XColumn.type_bool;
-                columns.add(new Column(name, XStrings.orElse(xf.value(), name), xtype, xf.enumKey(), xf.indep(), xf.show(), xf.primary()));
+            if(xc == null) {
+                columns.add(new Column(name));
+            } else if(xc.show() > 0) {
+                if(xc.type() == XColumn.type_model || xc.type() == XColumn.type_list) {
+                	columns.add(new Nested(name, xc, parseModelColumns(Nested.getType(field))));
+                } else {
+                	columns.add(new Column(name, xc, field.getType()));
+                }
             }
         }
         return columns;
     }
-    
+
 }

@@ -1,9 +1,7 @@
 package dev.xframe.admin.system;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 import dev.xframe.admin.system.auth.UserPrivileges;
@@ -28,15 +26,14 @@ public class SystemContext implements Loadable {
     
     private List<Privilege> privileges = new ArrayList<>();
     
-    private Map<String, String> privilegeDesc = new HashMap<>();
-    
     @Override
     public void load() {
-        addPrivilege(new Privilege("全部", "_"));
+        privileges.add(Privilege.WHOLE);
+        
         basicCtx.getSummary().getChapters().forEach(c->{
-            addPrivilege(new Privilege(c.getName(), c.getPath()));
+            privileges.add(new Privilege(c.getName(), c.getPath()));
             for (Segment seg : c.getSegments()) {
-                addPrivilege(new Privilege(seg.getName(), c.getPath() + "/" + seg.getPath()));
+                privileges.add(new Privilege("・"+seg.getName(), c.getPath() + "/" + seg.getPath()));
             }
         });
         
@@ -44,7 +41,6 @@ public class SystemContext implements Loadable {
         basicCtx.registEnumValue(XEnumKeys.PRIVILEGES, ()->privilegesEnum);
         
         roles = sysRepo.fetchRoles();
-        roles.forEach(this::setRoleDesc);
         
         basicCtx.registEnumValue(XEnumKeys.ROLE_LIST, ()->{
             return roles.stream().map(role->new VEnum(String.valueOf(role.getId()), role.getName())).collect(Collectors.toList());
@@ -57,7 +53,6 @@ public class SystemContext implements Loadable {
     
     void addPrivilege(Privilege p) {
         privileges.add(p);
-        privilegeDesc.put(p.getPath(), p.getName());
     }
     
     public Privilege getPrivilege(String path) {
@@ -68,10 +63,6 @@ public class SystemContext implements Loadable {
         return privileges;
     }
 
-    public Map<String, String> getPrivilegeDesc() {
-        return privilegeDesc;
-    }
-    
     public UserPrivileges getPrivileges(User user) {
         UserPrivileges p = new UserPrivileges(user.getName());
         for (int role : user.getRoles()) {
@@ -81,10 +72,6 @@ public class SystemContext implements Loadable {
             }
         }
         return p;
-    }
-    
-    public void setRoleDesc(Role role) {
-        role.setAuthoritiesDesc(role.getAuthorities().stream().map(a->getPrivilegeDesc().get(a)).collect(Collectors.toList()));
     }
     
     public Role getRole(int role) {
@@ -98,7 +85,6 @@ public class SystemContext implements Loadable {
     public void addRole(Role role) {
         int id = roles.stream().mapToInt(Role::getId).max().orElse(1000);
         role.setId(++id);
-        setRoleDesc(role);
         roles.add(role);
         sysRepo.addRole(role);
     }

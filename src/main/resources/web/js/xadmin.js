@@ -19,6 +19,8 @@ var xurl = window.location.origin.startsWith("http") ? window.location.origin : 
 var xpaths = {
     summary: "basic/summary",
     xenum  : "basic/enum",
+    upload : "basic/upload",
+    preview: "basic/preview"
 }
 
 //option types
@@ -27,7 +29,8 @@ var opTypes = {
     qry: 1,
     add: 2,
     edt: 3,
-    del: 4
+    del: 4,
+    flx: 5
 }
 
 //text types
@@ -37,10 +40,14 @@ var xTypes = {
     _enum: 2,
     _datetime: 3,
     _area: 4,
+    _file: 5,
+    _imag: 6,
     _pass: 9,
     _mult: 20,//multi enum select
     _date: 31,
     _time: 32,
+    _model:80,
+    _list: 81,
 }
 
 var xcolumn = {
@@ -50,21 +57,49 @@ var xcolumn = {
     edel: function(c){return (c.show & 8) > 0;},
 }
 
+var xenumCache = {};
 function xenum(key) {
-    return $.parseJSON($.ajax({
-        type: "GET",
-        url: "{0}/{1}?key={2}".format(xurl, xpaths.xenum, key),
-        cache: false,
-        async: false
-    }).responseText).data;
+    if(key in xenumCache) {
+        return xenumCache[key];
+    } else {
+        let xenumData = $.parseJSON($.ajax({
+            type: "GET",
+            url: "{0}/{1}?key={2}".format(xurl, xpaths.xenum, key),
+            headers: {"x-token": xtoken()},
+            cache: false,
+            async: false
+        }).responseText).data;
+        xenumCache[key] = xenumData;
+        return xenumData;//multi,key
+    }
+}
+function xenumText(key, id) {
+    let simpleText = function(_id) {
+        let data = xenum(key);
+        for(let e of data) {
+            if(e.id == _id) return e.text;
+        }
+        return _id;
+    }
+    if(Array.isArray(id)) {
+        let texts = [];
+        for(let _id of id) {
+            texts.push(simpleText(_id))
+        }
+        return texts;
+    } else {
+        return simpleText(id);
+    }
+}
+function xvalue(value) {
+    return value == undefined ? '' : value;
+}
+function xvalueByKey(value, key) {
+    return value ? xvalue(value[key]) : '';
 }
 
 function showSummary() {
     doGet(xpaths.summary, showSiderbar);
-}
-
-function xsegpath(segment) {
-    return '{0}/{1}'.format(segment.spath, segment.path);
 }
 
 function doGet(path, func) {
@@ -79,13 +114,13 @@ function doGet(path, func) {
 
 var xlatestOp;
 var httpTypes = ['_', 'get', 'post', 'put', 'delete']
-function doPost(path, op, data, func) {
+function doPost(path, op, data, func, _headers={}) {
     xlatestOp = op;
     $.ajax({
         type: httpTypes[op.type],
         url: '{0}/{1}'.format(xurl, path),
         data: JSON.stringify(data),
-        headers: {"x-token": xtoken()},
+        headers: Object.assign({"x-token": xtoken()}, _headers),
         dataType: 'json',
         success: doResp(func)
     });
@@ -162,8 +197,8 @@ function xselect2(e, xinput) {
                 minimumResultsForSearch: 10
             });
     e.val('').trigger('change');//设置默认不选择
-    //多选/无记忆
-    if(m || xinput.indep) return;
+    //多选 无记忆
+    if(m) return;
     //设置cache值
     if(eCaches[k]) s.val(eCaches[k]).trigger('change');
     //设值完成之后添加值变化监听
@@ -187,7 +222,7 @@ return `<li class="nav-item has-treeview">
         </li>
         `.format(chapter.name, chapter.path)
 }
-let chapterdom= function(data){return $('#chapter_{0}'.format(data.spath?data.spath : data.path));};
+let chapterdom= function(chapter){return $('#chapter_{0}'.format(chapter.path));};
 
 let segmenthtm= function(seg){
     return `
@@ -197,34 +232,107 @@ let segmenthtm= function(seg){
               <p>{2}</p>
             </a>
         </li>
-        `.format(seg.spath, seg.path, seg.name);
+        `.format(seg.cpath, seg.path, seg.name);
 }
-let segmentdom= function(seg){return $('#seg_{0}_{1}'.format(seg.spath, seg.path));}
+let segmentdom= function(seg){return $('#seg_{0}_{1}'.format(seg.cpath, seg.path));}
+
+let tabctxhtm= `
+            <div class="card-header p-0 border-bottom-0">
+            <ul id="xtabContainer" class="nav nav-tabs" role="tablist"></ul>
+            </div>
+            `;
+let tabelehtm= function(seg){
+    return `
+        <li class="nav-item">
+            <a id="segtab_{0}_{1}" class="nav-link text-dark" data-toggle="pill" href="javascript:void(0);" role="tab" aria-selected="false">{2}</a>
+        </li>`.format(seg.cpath, seg.path, seg.name);
+}
+let tabeledom= function(seg) {return $('#segtab_{0}_{1}'.format(seg.cpath, seg.path));}
 
 function showSiderbar(data) {
+    let fixSegDetail = function(seg, cpath, segpath) {
+        seg.cpath = cpath;
+        seg.detail.path = seg.path;
+        seg.detail.segname = seg.name;
+        seg.detail.segpath = segpath;
+    }
     for(let chapter of data.chapters){
         $('#xsiderbar').append(chapterhtm(chapter));
-        for(let seg of chapter.segments){//二级菜单
-            seg.spath = chapter.path;
-            seg.detail.path = seg.path;
-            seg.detail.segname = seg.name;
-            seg.detail.segpath = xsegpath(seg);
-            chapterdom(chapter).append(segmenthtm(seg));
-            xclick(segmentdom(seg), showDetailFunc(seg));
+        if(chapter.padded) {//有tab页
+            for(let pseg of chapter.padded) {
+                pseg.cpath = chapter.path
+                let _segments = [];
+                for(let tsegIdx in chapter.segments) {
+                    let tseg = chapter.segments[tsegIdx];
+                    let nseg = Object.assign({}, tseg, {detail: Object.assign({},tseg.detail)});//copy seg
+                    fixSegDetail(nseg, chapter.path, chapter.path.urljoin(pseg.path).urljoin(tseg.path))
+                    nseg.index = tsegIdx;
+                    _segments.push(nseg);
+                }
+                chapterdom(chapter).append(segmenthtm(pseg))
+                xclick(segmentdom(pseg), showDetailFunc(pseg, _segments));
+            }
+        } else {
+            for(let seg of chapter.segments){//二级菜单
+                fixSegDetail(seg, chapter.path, chapter.path.urljoin(seg.path));
+                chapterdom(chapter).append(segmenthtm(seg));
+                xclick(segmentdom(seg), showDetailFunc(seg));
+            }
         }
     }
 }
 
 var xlatestSeg;
-function showDetailFunc(seg) {
+var xlatestTab={};
+function showDetailFunc(seg, segTabs=undefined) {
     return function() {
         if(xlatestSeg)
-           segmentdom(xlatestSeg).removeClass('active'); 
+            segmentdom(xlatestSeg).removeClass('active'); 
         xlatestSeg = seg;
         segmentdom(seg).addClass('active');
 
-        showDetail(seg.detail);
+        $('#xcontent').empty();
+        let detailBodyHtm = `
+                <div class="card-header">
+                  <div class="row">
+                    <div id="xboxhead" class="clearfix w-100"></div>
+                  </div>
+                </div>
+                <div id="xboxbody" class="card-body">
+                </div>`;
+        
+        if(segTabs) {
+            $('#xcontent').append($(tabctxhtm));
+            $('#xcontent').append($(detailBodyHtm));
+            for(let segTab of segTabs) {
+                $('#xtabContainer').append(tabelehtm(segTab));
+                xclick(tabeledom(segTab), showDetailFuncByTab(segTab));
+            }
+            //show first tab
+            let showIndex = 0;
+            if(seg.cpath in xlatestTab) {
+                showIndex = xlatestTab[seg.cpath];
+            }
+            showDetailFuncByTab(segTabs[showIndex])();
+        } else {
+            $('#xcontent').append($(detailBodyHtm));
+            showDetail(seg.detail);
+        }
     };
+}
+
+function showDetailFuncByTab(segTab) {
+    return function() {
+        if(xlatestSeg.tab) {
+            tabeledom(xlatestSeg.tab).removeClass('active');
+            tabeledom(xlatestSeg.tab).attr('aria-selected', false);
+        }
+        xlatestSeg.tab = segTab;
+        xlatestTab[segTab.cpath] = segTab.index;
+        tabeledom(segTab).addClass('active');
+        tabeledom(segTab).attr('aria-selected', true);
+        showDetail(segTab.detail);
+    }
 }
 
 // popup dialog keypress listening

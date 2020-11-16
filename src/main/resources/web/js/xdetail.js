@@ -37,7 +37,7 @@ var xmodel = {
         for(key of this.pkeys) {
             if(d1[key] != d2[key]) return false;
         }
-        return true;
+        return this.pkeys.length > 0;
     },
     add: function(data) {
         this.datas.push(data);
@@ -53,13 +53,18 @@ var xmodel = {
         }
     }
 }
+var getValFromModel = function(model, column) {
+    let val = model[column.key];
+    if(column.type == xTypes._enum || column.type == xTypes._mult) {
+        return xenumText(column.enumKey, val);
+    }
+    return xvalue(val);
+}
 
 //table detail
 var xtd = {
     tabletd: `<td id='xtd_{0}_{1}'>{2}</td>`,
     tabletr: `<tr id='xtr_{0}'/>`,
-    tabletdDom: function(tr, td){return $('#xtd_{0}_{1}'.format(tr, td))},
-    tabletrDom: function(tr){return $('#xtr_{0}'.format(tr))},
 
     delBtn: `<button id="delbtn_{0}_{1}" type="button" class="btn btn-sm btn-outline-danger">{2}</button>`,
     edtBtn: `<button id="edtbtn_{0}_{1}" type="button" class="btn btn-sm btn-outline-info" style="margin-right:5px">{2}</button>`,
@@ -98,17 +103,10 @@ var xtd = {
     _ops: false,
     showDetailInternal: function(detail, data=undefined) {
         if(!data) data = [];
+        xmodel.set(detail, data);
 
         $('#xboxhead').empty();
         $('#xboxbody').empty();
-
-        let tablehtm = `
-                    <table id="xtable" class="table table-bordered table-hover">
-                        <thead id="xthead"></thead>
-                        <tbody id="xtbody"></tbody>
-                    </table>
-                    `;
-        $('#xboxbody').append($(tablehtm));
 
         _ops = false;
         let _tr = 0;
@@ -131,49 +129,81 @@ var xtd = {
             if(op.type == opTypes.del) _ops = true;
         }
         
-        //table head
-        $('#xthead').append($(this.tabletr.format(_tr)))
-        for(let column of detail.columns){
-            if(xcolumn.list(column)) {
-                this.tabletrDom(_tr).append($(this.tabletd.format(_tr, 0, column.hint)));
-            }
-        }
-        if(_ops) {//options td head
-            this.tabletrDom(_tr).append($(this.tabletd.format(_tr, 0, "Options")));    
-        }
 
-        xmodel.set(detail, data);
+        let tablehtm = `
+                    <table id="xtable" class="table table-bordered table-hover">
+                        <thead id="xthead"></thead>
+                        <tbody id="xtbody"></tbody>
+                    </table>
+                    `;
+        $('#xboxbody').append($(tablehtm));
+
+        //table head
+        this.showTableHead($('#xthead'), detail.columns, _tr, _ops);
         //table body
         this.showDetailBody(detail, xmodel.datas);
+    },
+    showTableHead: function(parent, columns, _tr, __ops=false) {
+        let _tabletr = $(this.tabletr.format(_tr));
+        parent.append(_tabletr);
+        for(let column of columns){
+            if(xcolumn.list(column)) {
+                _tabletr.append($(this.tabletd.format(_tr, 0, column.hint)));
+            }
+        }
+        if(__ops) {//options td head
+            _tabletr.append($(this.tabletd.format(_tr, 0, "Options")));    
+        }
     },
     showDetailBodyFunc:function() {
         return this.showDetailBody.bind(this);
     },
     showDetailBody: function(detail, data) {
-        $('#xtbody').empty();
+        this.showTableBody($('#xtbody'), detail.columns, data, _ops, detail)
+    },
+    showTableBody:function(parent, columns, data, _ops, detail) {
+        parent.empty();
 
         let _tr = 0;
         //table body
         for(let model of data) {
             model._id = (++ _tr);
-            $('#xtbody').append($(this.tabletr.format(_tr)))
+            let _tabletr = $(this.tabletr.format(_tr));
+            parent.append(_tabletr)
             var _td = 0;
-            for(let column of detail.columns){
+            for(let column of columns){
                 if(xcolumn.list(column)) {
-                    this.tabletrDom(_tr).append($(this.tabletd.format(_tr, (++_td), model[column.key])));
+                    if(column.type == xTypes._model || column.type == xTypes._list) {
+                        let _tabletd = $(this.tabletd.format(_tr, (++_td), ''));
+                        let _ntable = $(`<table class="table table-bordered table-hover table-sm text-sm mb-0 "></table>`);
+                        let _nthead = $(`<thead></thead>`);
+                        let _ntbody = $(`<tbody></tbody>`);
+
+                        _tabletr.append(_tabletd);
+                        _tabletd.append(_ntable);
+                        _ntable.append(_nthead);
+                        _ntable.append(_ntbody);
+                        
+                        this.showTableHead(_nthead, column.columns, _tr);
+                        let val = getValFromModel(model, column);
+                        this.showTableBody(_ntbody, column.columns, column.type==xTypes._model?[val]:val)
+                    } else {
+                        _tabletr.append($(this.tabletd.format(_tr, (++_td), getValFromModel(model, column))));
+                    }
                 }
             }
             //options td
             if(_ops) {
-                this.tabletrDom(_tr).append($(this.tabletd.format(_tr, (++_td), '')));
+                let _tabletd = $(this.tabletd.format(_tr, (++_td), ''));
+                _tabletr.append(_tabletd);
                 for(let op of detail.options) {
                     let ident = opIdent(detail, op);
                     if(op.type == opTypes.edt) {
-                        this.tabletdDom(_tr, _td).append(this.edtBtn.format(ident, _tr, op.name));
+                        _tabletd.append(this.edtBtn.format(ident, _tr, op.name));
                         xclick(this.edtBtnDom(ident, _tr), showDialogFunc(detail, op, model, this.showDetailBodyFunc()));
                     }
                     if(op.type == opTypes.del) {
-                        this.tabletdDom(_tr, _td).append(this.delBtn.format(ident, _tr, op.name));
+                        _tabletd.append(this.delBtn.format(ident, _tr, op.name));
                         xclick(this.delBtnDom(ident, _tr), showDialogFunc(detail, op, model, this.showDetailBodyFunc()));
                     }
                 }
@@ -196,104 +226,65 @@ var xtd = {
 
 //panel detail
 var xpd = {//重用dialog相关element
+    descHtm: `<div class="col-sm-8 m-auto h-100 h5">{0}</div>`,
+    panelhtm: `<form id="xpanel_form" class="form-horizontal"/>`,
+    btnRow: `<div id="xpanel_btnrow" class="form-group row"></div>`,
+
     edtBtn: `<div class="col-sm-2 m-auto"><button id="xpanel_edtbtn_{0}" type="button" class="btn btn-block bg-info">{1}</button></div>`,
     delBtn: `<div class="col-sm-2 m-auto"><button id="xpanel_delbtn_{0}" type="button" class="btn btn-block bg-danger">{1}</button></div>`,
     edtBtnDom: function(path){return $('#xpanel_edtbtn_{0}'.format(path))},
     delBtnDom: function(path){return $('#xpanel_delbtn_{0}'.format(path))},
-    btnRow: `<div id="xpanel_btnrow" class="form-group row"></div>`,
 
     showDetailInternal: function(detail, data) {
         if(!data) data = {};
-        this.qryOp = getOption(detail, opTypes.qry);
         //empty ex
         $('#xboxhead').empty();
         $('#xboxbody').empty();
         //desc
-        $('#xboxhead').append('<div class="col-sm-8 m-auto"><h4>{0}</h4></div>'.format(detail.desc));
+        $('#xboxhead').append(this.descHtm.format(detail.desc));
         //body form
-        let panelhtm = `<form id="xpanel_form" class="form-horizontal"/>`;
-        $('#xboxbody').append($(panelhtm));
+        $('#xboxbody').append($(this.panelhtm));
         //add to body form use methods from dialog
-        let dlgIdent = 'xpanel';
-        for(let column of detail.columns) {
-            let val = dialogInputVal(data, column.key);
-            addDlgInput($('#xpanel_form'), column, dlgIdent, val);
-            let dom = dlgInputDom(dlgIdent, column.key);
-            if (data && !xcolumn.edit(column)) {
-                dom.attr("disabled", true);
-            }
-            if(this.inQryOpInputs(column)) {
-                xchange(dom, this.onColumnChangeFunc(detail, column, dom));
-            }
-        }
+        let dlg = detailToDlg(detail, true);
+        showDialogForm($('#xpanel_form'), dlg, {}, data, getOption(detail, opTypes.flx));
         //add button row
         $('#xboxbody').append($(this.btnRow));
         for(let op of detail.options) {
             if(op.type == opTypes.del) {
                 $('#xpanel_btnrow').append($(this.delBtn.format(op.path, op.name)));
-                xclick(this.delBtnDom(op.path), this.submitPanelFunc(detail, op));
+                xclick(this.delBtnDom(op.path), this.submitPanelFunc(detail, dlg, op));
             } else if(op.type == opTypes.edt) {
                 $('#xpanel_btnrow').append($(this.edtBtn.format(op.path, op.name)));
-                xclick(this.edtBtnDom(op.path), this.submitPanelFunc(detail, op));
+                xclick(this.edtBtnDom(op.path), this.submitPanelFunc(detail, dlg, op));
             }
         }
     },
-    qryOp: undefined,
-    inQryOpInputs: function(column) {
-        if(this.qryOp) {
-            for(let c of this.qryOp.inputs) {
-                if(c.key === column.key) return true;
-            }
-        }
-        return false;
-    },
-    qryColumnVals: {},
-    onColumnChangeFunc: function(detail, column, dom) {
-        let that = this;
-        return function(e) {
-            that.qryColumnVals[column.key] = dom.val();
-            if(that.qryOp) {
-                for(let c of that.qryOp.inputs) {
-                    if(!that.qryColumnVals[c.key]) return;
-                }
-                doGet('{0}?{1}'.format(detail.segpath, ($.param(that.qryColumnVals))), function(data){
-                    if(data.columns) {//显示结构发生变化
-                        detail.columns = data.columns;
-                        that.showDetailInternal(detail, data.internal);    
-                    } else {
-                        that.showDetailInternal(detail, data);
-                    }
-                });
-            }
-        }
-    },
-    submitPanelFunc: function(detail, op) {
+    submitPanelFunc: function(detail, dlg, op) {
         let that = this;
         return function() {
-            that.submitPanel(detail, op, function(resp){
+            that.submitPanel(detail, dlg, op, function(resp){
                 that.showDetailInternal(detail, resp);
             });
         }
     },
-    submitPanel: function(detail, op, func) {
-        let dlgIdent = 'xpanel';
-        var model = {};
-        for(let column of detail.columns) {
-            let key = column.key;
-            model[key] = dlgInputDom(dlgIdent, key).val();
-            if(column.type==xTypes._pass) model[key]=$.md5(model[key]);
-        }
-        doPost(detail.segpath.urljoin(op.path), op, model, func);
+    submitPanel: function(detail, dlg, op, func) {
+        doPost(dlg.segpath.urljoin(op.path), op, getDialogFormObj(dlg), func, {'flex-name': detail.flexName});
     }
 };
 
-function detailToDlg(detail) {
+function detailToDlg(detail, flxPass=false) {
     return {
         ident: detail.path,
         segname: detail.segname,
         segpath: detail.segpath,
         opColumns: function (_op) {
             return (_op.inputs && _op.inputs.length > 0) ? _op.inputs : detail.columns;
+        },
+        flex: function(flx) {//有flxOp时 调用
+            if(flxPass) {
+                Object.assign(detail.columns, flx.columns, {length:flx.columns.length});
+                detail.flexName = flx.flexName;
+            }
         }
     }
 }
@@ -310,7 +301,7 @@ function showDialogFunc(detail, op, model, refreshDetail) {//model or supplier f
                 if(op.type == opTypes.del) xmodel.del(data);
             }
             refreshDetail(detail, xmodel.datas);
-        });
+        }, getOption(detail, opTypes.flx));
     };
 }
 

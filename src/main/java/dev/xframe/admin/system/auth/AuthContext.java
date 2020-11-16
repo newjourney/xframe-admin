@@ -15,7 +15,9 @@ import io.netty.handler.codec.http.HttpMethod;
 @Configurator
 public class AuthContext implements Loadable {
     
-    @Inject
+    private static final String TOKEN_KEY = "x-token";
+
+	@Inject
     private TaskContext taskCtx;
     
     private Map<String, UserPrivileges> tokenMap = new ConcurrentHashMap<>();
@@ -56,14 +58,25 @@ public class AuthContext implements Loadable {
         return token;
     }
     
+    public void unregist(Request req, String name) {
+    	tokenMap.remove(getXToken(req));
+    	userMap.remove(name);
+	}
+    
     public String getAuthUsername(Request req) {
-    	String token = req.getHeader("x-token");
+    	String token = getXToken(req);
         if(token != null) {
             UserPrivileges p = tokenMap.get(token);
             if(p != null) return p.getUsername();
         }
         return null;
     }
+
+	private String getXToken(Request req) {
+		String token = req.getHeader(TOKEN_KEY);
+		if(token == null) token = req.getParam(TOKEN_KEY);
+		return token;
+	}
     
     public boolean unblockedMatch(HttpMethod method, String path) {
     	Unblocked unblocked = unblockedMap.get(path);
@@ -90,7 +103,7 @@ public class AuthContext implements Loadable {
         UserPrivileges p = userMap.get(username);
         if(p != null) {
             if(method.equals(HttpMethod.GET)) {
-                if(p.contains(path)) return true;
+                if(p.readContains(path)) return true;
             } else {
                 if(p.wholeContains(path)) return true;
             }
@@ -99,8 +112,7 @@ public class AuthContext implements Loadable {
 	}
 
     public UserPrivileges getPrivileges(Request req) {
-        String token = req.getHeader("x-token");
-        return tokenMap.get(token);
+        return tokenMap.get(getXToken(req));
     }
 
 }
